@@ -211,7 +211,7 @@ function prepare() {
     mkdir -p pki user config-per-group config-per-user defaults tmpl pem
     mkdir -p /root/anyconnect
    
-    remote_repo=https://raw.githubusercontent.com/wangwanjie/ocserv
+    remote_repo=https://raw.githubusercontent.com/wangwanjie/ocserv-install
     remote_repo_branch=master
 
     rm -rf ocserv.conf connect-script config-per-group/* tmpl/* pem/*

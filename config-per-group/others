@@ -1,0 +1,3 @@
+# (x*1024)*1024/8
+rx-data-per-sec = 262144
+tx-data-per-sec = 262144
