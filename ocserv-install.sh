@@ -129,7 +129,7 @@ function removeUser() {
 }
 
 # 启动或重启 ocserv
-function startOrOcserv() {
+function startOrRestartOcserv() {
     if pgrep "ocserv" > /dev/null ; then
         echo "正在重启 ocserv ..."
         systemctl restart ocserv
@@ -161,41 +161,101 @@ function statusOcserv() {
 function configIpv4Firewall() {
     echo "配置 ipv4防火墙 ..."
     echo "net.ipv4.ip_forward = 1" | sudo tee /etc/sysctl.d/60-custom.conf
-    echo "net.core.default_qdisc=fq" | sudo tee -a /etc/sysctl.d/60-custom.conf
-    echo "net.ipv4.tcp_congestion_control=bbr" | sudo tee -a /etc/sysctl.d/60-custom.conf
+    read -p "是否开启bbr？ [y/n]: " confirm
+    if [[ "$confirm" = [yY] ]]; then
+        if [[ "$os" == "centos" ]]; then
+                if [[ "$os_version" -eq "8" ]]; then
+                    echo "net.core.default_qdisc=fq" | sudo tee -a /etc/sysctl.d/60-custom.conf
+                    echo "net.ipv4.tcp_congestion_control=bbr" | sudo tee -a /etc/sysctl.d/60-custom.conf
+                elif [[ "$os_version" -eq "7" ]]; then
+                    rpm --import https://www.elrepo.org/RPM-GPG-KEY-elrepo.org
+                    rpm -Uvh https://www.elrepo.org/elrepo-release-7.0-3.el7.elrepo.noarch.rpm
+                    yum --enablerepo=elrepo-kernel install kernel-ml -y
+                    # sudo egrep ^menuentry /etc/grub2.cfg | cut -f 2 -d \'
+                    # sudo grub2-set-default 0
+                    # grub2-mkconfig -o /boot/grub2/grub.cfg
+                fi
+        elif [[ "$os" == "ubuntu" ]]; then
+            echo "net.core.default_qdisc=fq" | sudo tee -a /etc/sysctl.d/60-custom.conf
+            echo "net.ipv4.tcp_congestion_control=bbr" | sudo tee -a /etc/sysctl.d/60-custom.conf
+        else
+            echo "Unsupported OS type."
+            exit 1
+        fi
+    else
+        echo "不安装bbr"
+    fi
+    
     sudo sysctl -p /etc/sysctl.d/60-custom.conf
 
+    # Check if firewall-cmd is installed
+    if [ "$(which firewall-cmd)" ]; then
+        echo "firewall-cmd is already installed."
+    else
+        if [[ "$os" == "centos" ]]; then
+            if [[ "$os_version" -eq "8" ]]; then
+                sudo dnf install firewalld -y
+            elif [[ "$os_version" -eq "7" ]]; then
+                sudo yum install firewalld -y
+            fi
+        elif [[ "$os" == "ubuntu" ]]; then
+            sudo apt-get update
+            sudo apt-get install firewalld -y
+        else
+            echo "Unsupported OS type."
+            exit 1
+        fi
+    fi
+     # Start firewall-cmd and enable at boot
     sudo systemctl start firewalld
+    sudo systemctl enable firewalld
     sudo firewall-cmd --permanent --add-port=$PORT/tcp
     sudo firewall-cmd --permanent --add-port=$PORT/udp
     sudo firewall-cmd --permanent --add-port=80/tcp
     sudo firewall-cmd --permanent --add-service=https
 
-    sudo firewall-cmd --permanent --add-rich-rule="rule family='ipv4' source address='${vpnnetwork}/24' masquerade"
+    sudo firewall-cmd --permanent --add-rich-rule="rule family='ipv4' source address='${ipv4_network}/24' masquerade"
     sudo systemctl reload firewalld
 
     echo "配置 ipv4防火墙结束，已重启防火墙"
 }
 
 function prepare() {
-    cd /etc/yum.repos.d/
-    sed -i 's/mirrorlist/#mirrorlist/g' /etc/yum.repos.d/CentOS-*
-    sed -i 's|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' /etc/yum.repos.d/CentOS-*
-    wget -O /etc/yum.repos.d/CentOS-Base.repo https://mirrors.aliyun.com/repo/Centos-vault-8.5.2111.repo
-    yum clean all
-    yum makecache
 
-    sudo yum install wget -y
-    sudo yum install dnf -y
-    sudo yum install expect -y
+if [[ "$os" == "centos" ]]; then
+    if [[ "$os_version" -eq "8" ]]; then
+        cd /etc/yum.repos.d/
+        sed -i 's/mirrorlist/#mirrorlist/g' /etc/yum.repos.d/CentOS-*
+        sed -i 's|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' /etc/yum.repos.d/CentOS-*
+        wget -O /etc/yum.repos.d/CentOS-Base.repo https://mirrors.aliyun.com/repo/Centos-vault-8.5.2111.repo
+        yum clean all
+        yum makecache
 
-    sudo dnf install httpd -y
-    sudo systemctl enable httpd
+        sudo yum install wget -y
+        sudo yum install dnf -y
+        sudo yum install expect -y
 
-    sudo dnf install epel-release -y
-    sudo yum install -y gnutls-utils
-    sudo dnf install ocserv -y
+        sudo dnf install httpd -y
+        sudo systemctl enable httpd
 
+        sudo dnf install epel-release -y
+        sudo yum install -y gnutls-utils
+        sudo dnf install ocserv -y
+    elif [[ "$os_version" -eq "7" ]]; then
+        sudo yum install wget -y
+        sudo yum install expect -y
+
+        sudo yum install httpd -y
+        sudo systemctl enable httpd
+
+        sudo yum install epel-release -y
+        sudo yum install -y gnutls-utils
+        sudo yum install ocserv -y
+    fi
+elif [[ "$os" == "ubuntu" ]]; then
+    sudo apt update
+    sudo apt install ocserv
+fi
     get_public_ip=$(grep -m 1 -oE '^[0-9]{1,3}(\.[0-9]{1,3}){3}$' <<< "$(wget -T 10 -t 1 -4qO- "http://ip1.dynupdate.no-ip.com/" || curl -m 10 -4Ls "http://ip1.dynupdate.no-ip.com/")")
     read -p "Public IPv4 address / hostname [$get_public_ip]: " public_ip
     # If the checkip service is unavailable and user didn't provide input, ask again
