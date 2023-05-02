@@ -96,7 +96,7 @@ function cert_add() {
     cp -R $user_name /var/www/html/user/$user_name
 	echo "$user_name 用户已成功创建，密码为 $user_pass"
 	echo "$user_name 的证书已成功创建，请点击以下链接进行下载。"
-	echo "http://$public_ip/$user_name.p12"
+	echo "http://$public_ip/user/$user_name/$user_name.p12"
 	echo "证书本地路径为：$user_root_dir/$user_name"
 	echo "导入证书的密码是 $user_pass"
 	echo "VPN 地址和端口是 $public_ip:$PORT"
