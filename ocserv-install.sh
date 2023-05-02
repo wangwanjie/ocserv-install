@@ -290,12 +290,18 @@ fi
     chmod +x user_add.sh
     chmod +x user_del.sh
 
+read -p "请输入证书签发组织名称 [vanjay.cn]: " sign_org
+[[ -z "$sign_org" ]] && sign_org="vanjay.cn"
+
+read -p "请输入证书有效期(天) [3650]: " cert_valid_days
+[[ -z "$cert_valid_days" ]] && cert_valid_days="3650"
+
     cd $OCSERV/tmpl
 cat >ca.tmpl <<EOF
 cn = "VanJay AnyConnect CA"
-organization = "vanjay.cn"
+organization = "$sign_org"
 serial = 1
-expiration_days = 3650
+expiration_days = $cert_valid_days
 ca
 signing_key
 cert_signing_key
@@ -304,9 +310,9 @@ EOF
 
 cat >server.tmpl <<EOF
 cn = "VanJay AnyConnect CA"
-organization = "vanjay.cn"
+organization = "$sign_org"
 serial = 2
-expiration_days = 3650
+expiration_days = $cert_valid_days
 encryption_key
 signing_key
 tls_www_server
