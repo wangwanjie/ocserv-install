@@ -112,6 +112,7 @@ function uninstallOcserv() {
         rm -rf $OCSERV/
         rm -rf /root/anyconnect
         rm -rf /var/www/html/user
+        rm -rf /var/lib/ocserv
         echo "ocserv 卸载完成！"
     else
         echo "已取消操作。"
