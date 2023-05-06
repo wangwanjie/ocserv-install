@@ -214,6 +214,7 @@ function configIpv4Firewall() {
     sudo firewall-cmd --permanent --add-port=$PORT/udp
     sudo firewall-cmd --permanent --add-port=80/tcp
     sudo firewall-cmd --permanent --add-service=https
+    sudo firewall-cmd --permanent --add-service=ssh
 
     sudo firewall-cmd --permanent --add-rich-rule="rule family='ipv4' source address='${ipv4_network}/24' masquerade"
     sudo systemctl reload firewalld
