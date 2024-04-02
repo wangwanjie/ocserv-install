@@ -1,10 +1,18 @@
 #!/bin/bash
 
 # 判断系统版本，根据不同系统选择不同的安装命令
-if cat /etc/os-release | grep -q "centos"; then
+if grep -qs "centos" /etc/os-release; then
     PKG_MANAGER="yum"
-elif cat /etc/os-release | grep -q "ubuntu\|debian"; then
-    PKG_MANAGER="apt-get"
+    UPDATE_CMD="$PKG_MANAGER check-update -y"
+    INSTALL_CMD="$PKG_MANAGER install -y"
+    UPGRADE_CMD="$PKG_MANAGER upgrade -y"
+    REMOVE_CMD="$PKG_MANAGER remove -y"
+elif grep -qs "ubuntu\|debian" /etc/os-release; then
+    PKG_MANAGER="apt"
+    UPDATE_CMD="$PKG_MANAGER update -y"
+    INSTALL_CMD="$PKG_MANAGER install -y"
+    UPGRADE_CMD="$PKG_MANAGER full-upgrade -y"
+    REMOVE_CMD="$PKG_MANAGER remove -y"
 else
     echo "当前系统不受支持！"
     exit 1
@@ -12,8 +20,8 @@ fi
 
 # Detect Debian users running the script with "sh" instead of bash
 if readlink /proc/$$/exe | grep -q "dash"; then
-	echo 'This installer needs to be run with "bash", not "sh".'
-	exit
+    echo 'This installer needs to be run with "bash", not "sh".'
+    exit
 fi
 
 # Discard stdin. Needed when running from an one-liner which includes a newline
@@ -21,67 +29,65 @@ read -N 999999 -t 0.001
 
 # Detect OpenVZ 6
 if [[ $(uname -r | cut -d "." -f 1) -eq 2 ]]; then
-	echo "The system is running an old kernel, which is incompatible with this installer."
-	exit
+    echo "The system is running an old kernel, which is incompatible with this installer."
+    exit
 fi
 
-# Detect OS
-# $os_version variables aren't always in use, but are kept here for convenience
+# Detect OS and version, adjust for dependencies and compatibility
+os="unknown"
+os_version="unknown"
+group_name="nogroup"
+
 if grep -qs "ubuntu" /etc/os-release; then
-	os="ubuntu"
-	os_version=$(grep 'VERSION_ID' /etc/os-release | cut -d '"' -f 2 | tr -d '.')
-	group_name="nogroup"
-elif [[ -e /etc/debian_version ]]; then
-	os="debian"
-	os_version=$(grep -oE '[0-9]+' /etc/debian_version | head -1)
-	group_name="nogroup"
-elif [[ -e /etc/almalinux-release || -e /etc/rocky-release || -e /etc/centos-release ]]; then
-	os="centos"
-	os_version=$(grep -shoE '[0-9]+' /etc/almalinux-release /etc/rocky-release /etc/centos-release | head -1)
-	group_name="nobody"
-elif [[ -e /etc/fedora-release ]]; then
-	os="fedora"
-	os_version=$(grep -oE '[0-9]+' /etc/fedora-release | head -1)
-	group_name="nobody"
+    os="ubuntu"
+    os_version=$(grep 'VERSION_ID' /etc/os-release | cut -d '"' -f 2 | tr -d '.')
+    group_name="nogroup"
+elif grep -qs "debian" /etc/os-release; then
+    os="debian"
+    os_version=$(grep -oE '[0-9]+' /etc/debian_version | head -1)
+    group_name="nogroup"
+elif grep -qs "centos" /etc/os-release; then
+    os="centos"
+    os_version=$(grep -shoE '[0-9]+' /etc/centos-release | head -1)
+    group_name="nobody"
+elif grep -qs "fedora" /etc/os-release; then
+    os="fedora"
+    os_version=$(grep -oE '[0-9]+' /etc/fedora-release | head -1)
+    group_name="nobody"
 else
-	echo "This installer seems to be running on an unsupported distribution.
-Supported distros are Ubuntu, Debian, AlmaLinux, Rocky Linux, CentOS and Fedora."
-	exit
+    echo "This installer seems to be running on an unsupported distribution."
+    exit
 fi
 
 if [[ "$os" == "ubuntu" && "$os_version" -lt 1804 ]]; then
-	echo "Ubuntu 18.04 or higher is required to use this installer.
-This version of Ubuntu is too old and unsupported."
-	exit
+    echo "Ubuntu 18.04 or higher is required to use this installer."
+    exit
 fi
 
 if [[ "$os" == "debian" && "$os_version" -lt 9 ]]; then
-	echo "Debian 9 or higher is required to use this installer.
-This version of Debian is too old and unsupported."
-	exit
+    echo "Debian 9 or higher is required to use this installer."
+    exit
 fi
 
 if [[ "$os" == "centos" && "$os_version" -lt 7 ]]; then
-	echo "CentOS 7 or higher is required to use this installer.
-This version of CentOS is too old and unsupported."
-	exit
+    echo "CentOS 7 or higher is required to use this installer."
+    exit
 fi
 
 # Detect environments where $PATH does not include the sbin directories
 if ! grep -q sbin <<< "$PATH"; then
-	echo '$PATH does not include sbin. Try using "su -" instead of "su".'
-	exit
+    echo '$PATH does not include sbin. Try using "su -" instead of "su".'
+    exit
 fi
 
 if [[ "$EUID" -ne 0 ]]; then
-	echo "This installer needs to be run with superuser privileges."
-	exit
+    echo "This installer needs to be run with superuser privileges."
+    exit
 fi
 
 if [[ ! -e /dev/net/tun ]] || ! ( exec 7<>/dev/net/tun ) 2>/dev/null; then
-	echo "The system does not have the TUN device available.
-TUN needs to be enabled before running this installer."
-	exit
+    echo "The system does not have the TUN device available."
+    exit
 fi
 
 OCSERV=/etc/ocserv
@@ -91,24 +97,16 @@ ipv4_network="192.169.103.0"
 # 升级ocserv
 function upgradeOcserv() {
     echo "升级 ocserv ..."
-
-    # 根据系统使用合适的更新命令
-    if [[ $PKG_MANAGER == "yum" ]]; then
-        $PKG_MANAGER -y upgrade ocserv
-    else
-        $PKG_MANAGER -y upgrade
-        $PKG_MANAGER -y install ocserv
-    fi
-
+    $UPGRADE_CMD ocserv
     echo "ocserv 升级完成！"
 }
 
 # 卸载ocserv
 function uninstallOcserv() {
-     read -p "此操作将会卸载 ocserv 及其所有相关文件和配置，确认执行吗？ [y/n]: " confirm
+    read -p "此操作将会卸载 ocserv 及其所有相关文件和配置，确认执行吗？ [y/n]: " confirm
     if [[ "$confirm" = [yY] ]]; then
         echo "卸载 ocserv ..."
-        $PKG_MANAGER -y remove ocserv
+        $REMOVE_CMD ocserv
         rm -rf $OCSERV/
         rm -rf /root/anyconnect
         rm -rf /var/www/html/user
@@ -162,6 +160,7 @@ function statusOcserv() {
 function configIpv4Firewall() {
     echo "配置 ipv4防火墙 ..."
     echo "net.ipv4.ip_forward = 1" | sudo tee /etc/sysctl.d/60-custom.conf
+
     read -p "是否开启bbr？ [y/n]: " confirm
     if [[ "$confirm" = [yY] ]]; then
         if [[ "$os" == "centos" ]]; then
@@ -189,117 +188,77 @@ function configIpv4Firewall() {
     
     sudo sysctl -p /etc/sysctl.d/60-custom.conf
 
-    # Check if firewall-cmd is installed
-    if [ "$(which firewall-cmd)" ]; then
-        echo "firewall-cmd is already installed."
-    else
-        if [[ "$os" == "centos" ]]; then
-            if [[ "$os_version" -eq "8" ]]; then
-                sudo dnf install firewalld -y
-            elif [[ "$os_version" -eq "7" ]]; then
-                sudo yum install firewalld -y
-            fi
-        elif [[ "$os" == "ubuntu" ]]; then
-            sudo apt-get update
-            sudo apt-get install firewalld -y
-        else
-            echo "Unsupported OS type."
-            exit 1
-        fi
+    # 安装和启动 firewalld
+    if ! command -v firewall-cmd &> /dev/null; then
+        echo "Installing firewalld..."
+        $INSTALL_CMD firewalld
+        sudo systemctl start firewalld
+        sudo systemctl enable firewalld
     fi
-     # Start firewall-cmd and enable at boot
-    sudo systemctl start firewalld
-    sudo systemctl enable firewalld
+
+    # 配置防火墙规则
     sudo firewall-cmd --permanent --add-port=$PORT/tcp
     sudo firewall-cmd --permanent --add-port=$PORT/udp
     sudo firewall-cmd --permanent --add-port=80/tcp
     sudo firewall-cmd --permanent --add-service=https
     sudo firewall-cmd --permanent --add-service=ssh
-
     sudo firewall-cmd --permanent --add-rich-rule="rule family='ipv4' source address='${ipv4_network}/24' masquerade"
-    sudo systemctl reload firewalld
+    sudo firewall-cmd --reload
 
-    echo "配置 ipv4防火墙结束，已重启防火墙"
+    echo "ipv4防火墙配置完成，已重新加载防火墙规则。"
 }
 
 function prepare() {
 
 if [[ "$os" == "centos" ]]; then
-    if [[ "$os_version" -eq "8" ]]; then
-        cd /etc/yum.repos.d/
-        sed -i 's/mirrorlist/#mirrorlist/g' /etc/yum.repos.d/CentOS-*
-        sed -i 's|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' /etc/yum.repos.d/CentOS-*
-        wget -O /etc/yum.repos.d/CentOS-Base.repo https://mirrors.aliyun.com/repo/Centos-vault-8.5.2111.repo
-        yum clean all
-        yum makecache
-
-        sudo yum install wget -y
-        sudo yum install dnf -y
-        sudo yum install expect -y
-
-        sudo dnf install httpd -y
-        sudo systemctl enable httpd
-
+    if [[ "$os" == "centos" && "$os_version" -ge 8 ]]; then
+        # CentOS 8 和 CentOS Stream 的处理逻辑
         sudo dnf install epel-release -y
-        sudo yum install -y gnutls-utils
-        sudo dnf install ocserv -y
-    elif [[ "$os_version" -eq "7" ]]; then
-        sudo yum install wget -y
-        sudo yum install expect -y
-
-        sudo yum install httpd -y
-        sudo systemctl enable httpd
-
+        sudo dnf install wget expect httpd ocserv gnutls-utils -y
+    elif [[ "$os" == "centos" && "$os_version" -eq 7 ]]; then
+        # CentOS 7 的处理逻辑
         sudo yum install epel-release -y
-        sudo yum install -y gnutls-utils
-        sudo yum install ocserv -y
+        sudo yum install wget expect httpd ocserv gnutls-utils -y
+    elif [[ "$os" == "ubuntu" ]]; then
+        # Ubuntu 的处理逻辑
+        sudo apt update
+        sudo apt install wget expect apache2 ocserv gnutls-bin -y
+    else
+        echo "Unsupported OS type."
+        exit 1
     fi
-elif [[ "$os" == "ubuntu" ]]; then
-    sudo apt update
-    sudo apt install ocserv
-fi
-    get_public_ip=$(grep -m 1 -oE '^[0-9]{1,3}(\.[0-9]{1,3}){3}$' <<< "$(wget -T 10 -t 1 -4qO- "http://ip1.dynupdate.no-ip.com/" || curl -m 10 -4Ls "http://ip1.dynupdate.no-ip.com/")")
+
+    # 公共逻辑
+    get_public_ip=$(curl -s http://ip1.dynupdate.no-ip.com/ || curl -s http://icanhazip.com/)
     read -p "Public IPv4 address / hostname [$get_public_ip]: " public_ip
-    # If the checkip service is unavailable and user didn't provide input, ask again
-    until [[ -n "$get_public_ip" || -n "$public_ip" ]]; do
-        echo "Invalid input."
-        read -p "Public IPv4 address / hostname: " public_ip
-    done
-    [[ -z "$public_ip" ]] && public_ip="$get_public_ip"
+    public_ip=${public_ip:-$get_public_ip}
+    echo "公网 IP: $public_ip"
 
-    echo "公网 IP:$public_ip"
-
-    cd $OCSERV
-    mkdir -p pki user config-per-group config-per-user defaults tmpl pem
+    # 证书和配置文件的准备工作
+    mkdir -p $OCSERV/{pki,user,config-per-group,config-per-user,defaults,tmpl,pem}
     mkdir -p /root/anyconnect
-   
-    remote_repo=https://raw.githubusercontent.com/wangwanjie/ocserv-install
-    remote_repo_branch=master
 
-    rm -rf ocserv.conf connect-script config-per-group/* tmpl/* pem/*
+    # 从远程仓库下载配置文件和脚本
+    wget --no-check-certificate "$remote_repo/$remote_repo_branch/ocserv.conf" -O $OCSERV/ocserv.conf
+    wget --no-check-certificate "$remote_repo/$remote_repo_branch/connect-script" -O $OCSERV/connect-script
+    wget --no-check-certificate "$remote_repo/$remote_repo_branch/config-per-group/main" -O $OCSERV/config-per-group/main
+    wget --no-check-certificate "$remote_repo/$remote_repo_branch/config-per-group/others" -O $OCSERV/config-per-group/others
+    chmod +x $OCSERV/connect-script
 
-    wget --no-check-certificate $remote_repo/$remote_repo_branch/ocserv.conf
-    wget --no-check-certificate $remote_repo/$remote_repo_branch/connect-script
-    wget --no-check-certificate $remote_repo/$remote_repo_branch/config-per-group/main -O config-per-group/main
-    wget --no-check-certificate $remote_repo/$remote_repo_branch/config-per-group/others -O config-per-group/others
-    chmod +x connect-script
+    # 下载和准备客户端证书生成脚本
+    wget --no-check-certificate "$remote_repo/$remote_repo_branch/gen-client-cert.sh" -O /root/anyconnect/gen-client-cert.sh
+    wget --no-check-certificate "$remote_repo/$remote_repo_branch/user_add.sh" -O /root/anyconnect/user_add.sh
+    wget --no-check-certificate "$remote_repo/$remote_repo_branch/user_del.sh" -O /root/anyconnect/user_del.sh
+    chmod +x /root/anyconnect/{gen-client-cert.sh,user_add.sh,user_del.sh}
 
-    cd /root/anyconnect
-    wget --no-check-certificate $remote_repo/$remote_repo_branch/gen-client-cert.sh
-    wget --no-check-certificate $remote_repo/$remote_repo_branch/user_add.sh
-    wget --no-check-certificate $remote_repo/$remote_repo_branch/user_del.sh
-    chmod +x gen-client-cert.sh
-    chmod +x user_add.sh
-    chmod +x user_del.sh
+    # 证书签发组织和有效期的配置
+    read -p "请输入证书签发组织名称 [vanjay.cn]: " sign_org
+    sign_org=${sign_org:-"vanjay.cn"}
+    read -p "请输入证书有效期(天) [3650]: " cert_valid_days
+    cert_valid_days=${cert_valid_days:-3650}
 
-read -p "请输入证书签发组织名称 [vanjay.cn]: " sign_org
-[[ -z "$sign_org" ]] && sign_org="vanjay.cn"
-
-read -p "请输入证书有效期(天) [3650]: " cert_valid_days
-[[ -z "$cert_valid_days" ]] && cert_valid_days="3650"
-
-    cd $OCSERV/tmpl
-cat >ca.tmpl <<EOF
+    # 创建 CA 和服务器证书模板
+    cat > $OCSERV/tmpl/ca.tmpl <<EOF
 cn = "VanJay AnyConnect CA"
 organization = "$sign_org"
 serial = 1
@@ -310,7 +269,7 @@ cert_signing_key
 crl_signing_key
 EOF
 
-cat >server.tmpl <<EOF
+    cat > $OCSERV/tmpl/server.tmpl <<EOF
 cn = "VanJay AnyConnect CA"
 organization = "$sign_org"
 serial = 2
@@ -320,10 +279,10 @@ signing_key
 tls_www_server
 EOF
 
-cat << _EOF_ >crl.tmpl
+    cat > $OCSERV/tmpl/crl.tmpl <<EOF
 crl_next_update = 365
 crl_number = 1
-_EOF_
+EOF
 }
 
 function configDomain() {
@@ -358,7 +317,7 @@ function configDomain() {
     export Ali_Key=$ali_key
     export Ali_Secret=$ali_secret
 
-    yum install socat -y
+    $INSTALL_CMD socat
 
     curl https://get.acme.sh | sh
     export PATH="$PATH:$HOME/.acme.sh"
@@ -380,7 +339,7 @@ function configDomain() {
     startOrRestartOcserv
 
     echo "已修改 ocserv.conf，已重启 ocserv 服务"
-} 
+}
 
 function generate_server_cert() {
     cd $OCSERV/pem
@@ -389,15 +348,16 @@ function generate_server_cert() {
 
     certtool --generate-self-signed --load-privkey ca-key.pem --template $OCSERV/tmpl/ca.tmpl --outfile ca-cert.pem
 
-    # 生成本地服务器证书
+    # 生成服务器私钥
     certtool --generate-privkey --outfile server-key.pem
 
+    # 生成服务器证书
     certtool --generate-certificate --load-privkey server-key.pem \
     --load-ca-certificate ca-cert.pem --load-ca-privkey ca-key.pem \
     --template $OCSERV/tmpl/server.tmpl --outfile server-cert.pem
 
-    # 生成证书注销文件
-    touch $OCSERV/pem/revoked.pem
+    # 生成证书注销列表文件
+    touch revoked.pem
 
     certtool --generate-crl --load-ca-privkey ca-key.pem \
             --load-ca-certificate ca-cert.pem \
@@ -405,24 +365,29 @@ function generate_server_cert() {
 }
 
 function useSystemDNS() {
+    # 删除 ocserv.conf 中所有现有的 DNS 设置
     sed -i -e "/^#*\s*dns\s*=.*$/d" $OCSERV/ocserv.conf
 
-    # Locate the proper resolv.conf
-    # Needed for systems running systemd-resolved
-    if grep '^nameserver' "/etc/resolv.conf" | grep -qv '127.0.0.53' ; then
+    # 根据系统配置选择正确的 resolv.conf 文件
+    if grep '^nameserver' "/etc/resolv.conf" | grep -qv '127.0.0.53'; then
         resolv_conf="/etc/resolv.conf"
     else
         resolv_conf="/run/systemd/resolve/resolv.conf"
     fi
-    # Obtain the resolvers from resolv.conf and use them for OpenVPN
-    grep -v '^#\|^;' "$resolv_conf" | grep '^nameserver' | grep -v '127.0.0.53' | grep -oE '[0-9]{1,3}(\.[0-9]{1,3}){3}' | while read line; do
-        echo "\ndns = $line" >> $OCSERV/ocserv.conf
+
+    # 从 resolv.conf 文件中获取 DNS 设置，并添加到 ocserv.conf
+    grep -v '^#\|^;' "$resolv_conf" | grep '^nameserver' | grep -oE '[0-9]{1,3}(\.[0-9]{1,3}){3}' | while read line; do
+        echo "dns = $line" >> $OCSERV/ocserv.conf
     done
 }
 
 function useOtherDNS() {
-    sed -i "s|dns = 1.1.1.1|dns = $1|g" $OCSERV/ocserv.conf
-    sed -i "s|dns = 8.8.8.8 # the second|dns = $2|g" $OCSERV/ocserv.conf
+    # 先删除所有现有的 DNS 设置
+    sed -i -e "/^#*\s*dns\s*=.*$/d" $OCSERV/ocserv.conf
+
+    # 添加新的 DNS 服务器地址
+    echo "dns = $1" >> $OCSERV/ocserv.conf
+    echo "dns = $2" >> $OCSERV/ocserv.conf
 }
 
 # 配置 ocserv.conf
