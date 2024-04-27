@@ -210,7 +210,6 @@ function configIpv4Firewall() {
 
 function prepare() {
 
-if [[ "$os" == "centos" ]]; then
     if [[ "$os" == "centos" && "$os_version" -ge 8 ]]; then
         # CentOS 8 和 CentOS Stream 的处理逻辑
         sudo dnf install epel-release -y
