@@ -211,6 +211,8 @@ function configIpv4Firewall() {
     iptables -A INPUT -p tcp --dport 443 -j ACCEPT
     iptables -A INPUT -p tcp --dport 22 -j ACCEPT
     iptables -t nat -A POSTROUTING -s ${ipv4_network}/24 -o $default_interface -j MASQUERADE
+    iptables -A FORWARD -s ${ipv4_network}/24 -j ACCEPT 
+    iptables -A FORWARD -m state --state RELATED,ESTABLISHED -j ACCEPT
 
     # 保存 iptables 规则
     iptables-save > /etc/iptables/rules.v4
