@@ -119,12 +119,12 @@ function uninstallOcserv() {
 
 # 添加用户
 function addUser() {
-    sudo /root/anyconnect/user_add.sh
+    /root/anyconnect/user_add.sh
 }
 
 # 移除用户
 function removeUser() {
-    sudo /root/anyconnect/user_del.sh
+    /root/anyconnect/user_del.sh
 }
 
 # 启动或重启 ocserv
@@ -135,13 +135,6 @@ function startOrRestartOcserv() {
     else 
         echo "正在启动 ocserv ..."
         systemctl start ocserv
-    fi
-    if pgrep "httpd" > /dev/null ; then
-        echo "正在重启 httpd ..."
-        sudo systemctl restart httpd
-    else 
-        echo "正在启动 httpd ..."
-        sudo systemctl start httpd
     fi
 }
 
@@ -159,25 +152,28 @@ function statusOcserv() {
 # 配置 ipv4防火墙
 function configIpv4Firewall() {
     echo "配置 ipv4防火墙 ..."
-    echo "net.ipv4.ip_forward = 1" | sudo tee /etc/sysctl.d/60-custom.conf
+    echo "net.ipv4.ip_forward = 1" | tee /etc/sysctl.d/60-custom.conf
 
     read -p "是否开启bbr？ [y/n]: " confirm
     if [[ "$confirm" = [yY] ]]; then
         if [[ "$os" == "centos" ]]; then
                 if [[ "$os_version" -eq "8" ]]; then
-                    echo "net.core.default_qdisc=fq" | sudo tee -a /etc/sysctl.d/60-custom.conf
-                    echo "net.ipv4.tcp_congestion_control=bbr" | sudo tee -a /etc/sysctl.d/60-custom.conf
+                    echo "net.core.default_qdisc=fq" | tee -a /etc/sysctl.d/60-custom.conf
+                    echo "net.ipv4.tcp_congestion_control=bbr" | tee -a /etc/sysctl.d/60-custom.conf
                 elif [[ "$os_version" -eq "7" ]]; then
                     rpm --import https://www.elrepo.org/RPM-GPG-KEY-elrepo.org
                     rpm -Uvh https://www.elrepo.org/elrepo-release-7.0-3.el7.elrepo.noarch.rpm
                     yum --enablerepo=elrepo-kernel install kernel-ml -y
-                    # sudo egrep ^menuentry /etc/grub2.cfg | cut -f 2 -d \'
-                    # sudo grub2-set-default 0
+                    # egrep ^menuentry /etc/grub2.cfg | cut -f 2 -d \'
+                    # grub2-set-default 0
                     # grub2-mkconfig -o /boot/grub2/grub.cfg
                 fi
         elif [[ "$os" == "ubuntu" ]]; then
-            echo "net.core.default_qdisc=fq" | sudo tee -a /etc/sysctl.d/60-custom.conf
-            echo "net.ipv4.tcp_congestion_control=bbr" | sudo tee -a /etc/sysctl.d/60-custom.conf
+            echo "net.core.default_qdisc=fq" | tee -a /etc/sysctl.d/60-custom.conf
+            echo "net.ipv4.tcp_congestion_control=bbr" | tee -a /etc/sysctl.d/60-custom.conf
+        elif [[ "$os" == "debian" ]]; then
+            echo "net.core.default_qdisc=fq" | tee -a /etc/sysctl.d/60-custom.conf
+            echo "net.ipv4.tcp_congestion_control=bbr" | tee -a /etc/sysctl.d/60-custom.conf
         else
             echo "Unsupported OS type."
             exit 1
@@ -186,42 +182,60 @@ function configIpv4Firewall() {
         echo "不安装bbr"
     fi
     
-    sudo sysctl -p /etc/sysctl.d/60-custom.conf
+    sysctl -p /etc/sysctl.d/60-custom.conf
 
-    # 安装和启动 firewalld
-    if ! command -v firewall-cmd &> /dev/null; then
-        echo "Installing firewalld..."
-        $INSTALL_CMD firewalld
-        sudo systemctl start firewalld
-        sudo systemctl enable firewalld
+    # 获取默认网卡名称
+    default_interface=$(ip route show | sed -n 's/^default.* dev \([^ ]*\).*/\1/p')
+
+    # 检查是否成功获取网卡名称
+    if [ -z "$default_interface" ]; then
+        echo "无法获取默认网络接口。本脚本不支持当前系统配置。"
+        exit 1
+    fi
+
+    echo "使用默认网络接口：$default_interface"
+
+    # 检查并安装 iptables（如果尚未安装）
+    if ! command -v iptables &> /dev/null; then
+        echo "Installing iptables..."
+        $INSTALL_CMD iptables
+        systemctl start iptables
+        systemctl enable iptables
     fi
 
     # 配置防火墙规则
-    sudo firewall-cmd --permanent --add-port=$PORT/tcp
-    sudo firewall-cmd --permanent --add-port=$PORT/udp
-    sudo firewall-cmd --permanent --add-port=80/tcp
-    sudo firewall-cmd --permanent --add-service=https
-    sudo firewall-cmd --permanent --add-service=ssh
-    sudo firewall-cmd --permanent --add-rich-rule="rule family='ipv4' source address='${ipv4_network}/24' masquerade"
-    sudo firewall-cmd --reload
+    echo "配置 iptables 防火墙规则..."
+    iptables -A INPUT -p tcp --dport $PORT -j ACCEPT
+    iptables -A INPUT -p udp --dport $PORT -j ACCEPT
+    iptables -A INPUT -p tcp --dport 80 -j ACCEPT
+    iptables -A INPUT -p tcp --dport 443 -j ACCEPT
+    iptables -A INPUT -p tcp --dport 22 -j ACCEPT
+    iptables -t nat -A POSTROUTING -s ${ipv4_network}/24 -o $default_interface -j MASQUERADE
 
-    echo "ipv4防火墙配置完成，已重新加载防火墙规则。"
+    # 保存 iptables 规则
+    iptables-save > /etc/iptables/rules.v4
+
+    echo "IPv4 防火墙配置完成，iptables 规则已设置。"
+
 }
 
 function prepare() {
-
     if [[ "$os" == "centos" && "$os_version" -ge 8 ]]; then
         # CentOS 8 和 CentOS Stream 的处理逻辑
-        sudo dnf install epel-release -y
-        sudo dnf install wget expect httpd ocserv gnutls-utils -y
+        dnf install epel-release -y
+        dnf install wget expect ocserv gnutls-utils -y
     elif [[ "$os" == "centos" && "$os_version" -eq 7 ]]; then
         # CentOS 7 的处理逻辑
-        sudo yum install epel-release -y
-        sudo yum install wget expect httpd ocserv gnutls-utils -y
+        yum install epel-release -y
+        yum install wget expect ocserv gnutls-utils -y
     elif [[ "$os" == "ubuntu" ]]; then
         # Ubuntu 的处理逻辑
-        sudo apt update
-        sudo apt install wget expect apache2 ocserv gnutls-bin -y
+        apt update
+        apt install wget expect ocserv gnutls-bin -y
+    elif [[ "$os" == "debian" ]]; then
+        # debian 的处理逻辑
+        apt update
+        apt install wget expect ocserv gnutls-bin -y
     else
         echo "Unsupported OS type."
         exit 1
@@ -233,9 +247,15 @@ function prepare() {
     public_ip=${public_ip:-$get_public_ip}
     echo "公网 IP: $public_ip"
 
+
+    echo "ccccc:$OCSERV"
+
     # 证书和配置文件的准备工作
     mkdir -p $OCSERV/{pki,user,config-per-group,config-per-user,defaults,tmpl,pem}
     mkdir -p /root/anyconnect
+
+    remote_repo=https://raw.githubusercontent.com/wangwanjie/ocserv-install
+    remote_repo_branch=master
 
     # 从远程仓库下载配置文件和脚本
     wget --no-check-certificate "$remote_repo/$remote_repo_branch/ocserv.conf" -O $OCSERV/ocserv.conf
@@ -285,60 +305,111 @@ EOF
 }
 
 function configDomain() {
-    read -p "请输入 VPN 域名！(默认为 tz.vanjay.cn): " domain_name
-    if [ -z "$domain_name" ]; then
-        domain_name="tz.vanjay.cn"
-    fi
+    echo "请选择使用的 DNS 验证服务："
+    select dns_provider in "Ali" "Cloudflare"; do
+        case $dns_provider in
+            "Ali")
+                read -p "请输入 VPN 域名！(默认为 tz.vanjay.cn): " domain_name
+                if [ -z "$domain_name" ]; then
+                    domain_name="tz.vanjay.cn"
+                fi
 
-    read -p "请输入您的 Email！(默认为 396736694@qq.com): " mail_address
-    if [ -z "$mail_address" ]; then
-        mail_address="396736694@qq.com"
-    fi
+                read -p "请输入您的 Email！(默认为 396736694@qq.com): " mail_address
+                if [ -z "$mail_address" ]; then
+                    mail_address="396736694@qq.com"
+                fi
 
-    while true; do
-        read -p "请输入ali_key: " ali_key
-        if [[ -n "$ali_key" ]]; then
-            break
-        else
-            echo "无效的 ali_key"
-        fi
+                read -p "请输入 ali_key: " ali_key
+                while [ -z "$ali_key" ]; do
+                    echo "无效的 ali_key，请重新输入："
+                    read -p "请输入 ali_key: " ali_key
+                done
+
+                read -p "请输入 ali_secret: " ali_secret
+                while [ -z "$ali_secret" ]; do
+                    echo "无效的 ali_secret，请重新输入："
+                    read -p "请输入 ali_secret: " ali_secret
+                done
+
+                export Ali_Key=$ali_key
+                export Ali_Secret=$ali_secret
+                dns_mode="dns_ali"
+                break
+                ;;
+            "Cloudflare")
+                read -p "请输入 VPN 域名！(默认为 tz.beautyy.uk): " domain_name
+                if [ -z "$domain_name" ]; then
+                    domain_name="tz.beautyy.uk"
+                fi
+
+                read -p "请输入您的 Email！(默认为 vanjay.dev@gmail.com): " mail_address
+                if [ -z "$mail_address" ]; then
+                    mail_address="vanjay.dev@gmail.com"
+                fi
+
+                read -p "请输入 Cloudflare Email: " cf_email
+                while [ -z "$cf_email" ]; do
+                    echo "无效的 Cloudflare Email，请重新输入："
+                    read -p "请输入 Cloudflare Email: " cf_email
+                done
+
+                read -p "请输入 Cloudflare API Key: " cf_key
+                while [ -z "$cf_key" ]; do
+                    echo "无效的 Cloudflare API Key，请重新输入："
+                    read -p "请输入 Cloudflare API Key: " cf_key
+                done
+
+                export CF_Email=$cf_email
+                export CF_Key=$cf_key
+                dns_mode="dns_cf"
+                break
+                ;;
+            *)
+                echo "选择无效，请选择 'Ali' 或 'Cloudflare'."
+                ;;
+        esac
     done
 
-    while true; do
-        read -p "请输入ali_secret: " ali_secret
-        if [[ -n "$ali_secret" ]]; then
-            break
-        else
-            echo "无效的 ali_secret"
-        fi
-    done
+    # 安装 socat
+    $INSTALL_CMD socat || { echo "安装 socat 失败，脚本终止。"; exit 1; }
 
-    export Ali_Key=$ali_key
-    export Ali_Secret=$ali_secret
+    # 安装并初始化 acme.sh
+    curl https://get.acme.sh | sh && source "$HOME/.acme.sh/acme.sh.env" || { echo "安装 acme.sh 失败，脚本终止。"; exit 1; }
 
-    $INSTALL_CMD socat
-
-    curl https://get.acme.sh | sh
     export PATH="$PATH:$HOME/.acme.sh"
     alias acme.sh=~/.acme.sh/acme.sh
-    acme.sh  --register-account  -m $mail_address --server zerossl
-    acme.sh --issue --dns dns_ali -d $domain_name
-    mkdir -p $OCSERV/pki
 
-    cp -Rf ~/.acme.sh/${domain_name}_ecc/ $OCSERV/pki
+    # 注册 acme.sh 账户
+    acme.sh --register-account -m "$mail_address" --server zerossl || { echo "注册 acme.sh 账户失败，脚本终止。"; exit 1; }
 
-    cer_path=$OCSERV/pki/${domain_name}_ecc/${domain_name}.cer
-    key_path=$OCSERV/pki/${domain_name}_ecc/${domain_name}.key
+    # 生成证书
+    acme.sh --issue --dns "$dns_mode" -d "$domain_name" || { echo "证书生成失败，脚本终止。"; exit 1; }
 
-    # 更新 ocserv.conf 文件
-    sed -i "s#\(server-cert = \).*#\1$cer_path#" $OCSERV/ocserv.conf
-    sed -i "s#\(server-key = \).*#\1$key_path#" $OCSERV/ocserv.conf
-    sed -i "s#\(default-domain = \).*#\1$domain_name#" $OCSERV/ocserv.conf
+    # 确保创建证书存放目录
+    mkdir -p "$OCSERV/pki" || { echo "创建证书存放目录失败，脚本终止。"; exit 1; }
 
-    startOrRestartOcserv
+    # 拷贝证书到指定目录
+    cp -Rf "$HOME/.acme.sh/${domain_name}_ecc/" "$OCSERV/pki/" || { echo "拷贝证书失败，脚本终止。"; exit 1; }
 
-    echo "已修改 ocserv.conf，已重启 ocserv 服务"
+    # 设置证书路径
+    cer_path="$OCSERV/pki/${domain_name}_ecc/${domain_name}.cer"
+    key_path="$OCSERV/pki/${domain_name}_ecc/${domain_name}.key"
+
+    # 更新 ocserv 配置文件
+    sed -i "s#\(server-cert = \).*#\1$cer_path#" "$OCSERV/ocserv.conf" || { echo "更新 server-cert 配置失败，脚本终止。"; exit 1; }
+    sed -i "s#\(server-key = \).*#\1$key_path#" "$OCSERV/ocserv.conf" || { echo "更新 server-key 配置失败，脚本终止。"; exit 1; }
+    sed -i "s#\(default-domain = \).*#\1$domain_name#" "$OCSERV/ocserv.conf" || { echo "更新 default-domain 配置失败，脚本终止。"; exit 1; }
+
+    # 启动或重启 ocserv
+    if startOrRestartOcserv; then
+        echo "已修改 ocserv.conf，已重启 ocserv 服务"
+    else
+        echo "启动或重启 ocserv 服务失败，脚本终止。"
+        exit 1
+    fi
+
 }
+
 
 function generate_server_cert() {
     cd $OCSERV/pem
@@ -511,11 +582,10 @@ if ! hash ocserv 2>/dev/null; then
         $PKG_MANAGER -y install epel-release
         $PKG_MANAGER -y install ocserv
     else
-        sudo -i 
         $PKG_MANAGER install wget -y 
         $PKG_MANAGER -y update
         $PKG_MANAGER install epel-release wget -y
-        $PKG_MANAGER install ocserv httpd -y
+        $PKG_MANAGER install ocserv -y
     fi
 
     prepare
@@ -523,6 +593,20 @@ if ! hash ocserv 2>/dev/null; then
     configOcserv
     configIpv4Firewall
     enableAutoStart
+
+    # 创建ocserv运行所需的用户和组，如果不存在的话
+    if ! id "ocserv" &>/dev/null; then
+        echo "Creating 'ocserv' user and group..."
+        adduser --system --no-create-home --group ocserv
+    fi
+
+    # 确保配置文件和目录的权限正确
+    echo "设置配置文件权限..."
+
+    chown -R ocserv:ocserv /etc/ocserv
+    chmod -R 640 /etc/ocserv/ocserv.conf
+
+    mkdir -p /var/lib/ocserv
 
     echo "ocserv 安装完成！"
 else

@@ -22,10 +22,20 @@ This repository contains a simple script to automate the deployment of Ocserv on
 
 ## Installation
 
+### centos
+
  Run this code in your terminal
 
    ```
 sudo -i yum install wget -y && wget https://raw.githubusercontent.com/wangwanjie/ocserv-install/master/ocserv-install.sh && chmod +x ocserv-install.sh && ./ocserv-install.sh
+   ```
+
+### debian
+
+ Run this code in your terminal
+
+   ```
+sudo -i apt install wget -y && wget https://raw.githubusercontent.com/wangwanjie/ocserv-install/master/ocserv-install.sh && chmod +x ocserv-install.sh && ./ocserv-install.sh
    ```
 
 
